@@ -1,0 +1,75 @@
+{
+    "chan_config": {
+        "trigger_step": false,
+        "skip_step": 0,
+        "bi_algo": "normal",
+        "bi_strict": true,
+        "zs_combine": true,
+        "zs_combine_mode": "zs",
+        "bi_end_is_peak": true,
+        "bi_fx_check": "totally",
+        "bi_allow_sub_peak": true,
+        "seg_algo": "chan",
+        "divergence_rate": 1e9,
+        "bsp2_follow_1": false,
+        "bsp3_follow_1": false,
+        "min_zs_cnt": 0,
+        "bs1_peak": true,
+        "macd_algo": "peak",
+        "bs_type": "1,2,3a,1p,2s,3b",
+        "print_warning": true,
+        "zs_algo": "normal",
+        "mean_metrics": [
+            5,
+            20,
+            80
+        ],
+        "trend_metrics": [],
+        "cal_demark": false,
+        "cal_rsi": false
+    },
+    "plot_config": {
+        "plot_kline": true,
+        "plot_kline_combine": true,
+        "plot_bi": true,
+        "plot_seg": true,
+        "plot_segseg": false,
+        "plot_eigen": false,
+        "plot_zs": true,
+        "plot_segzs": true,
+        "plot_macd": true,
+        "plot_mean": true,
+        "plot_channel": false,
+        "plot_bsp": true,
+        "plot_cbsp": true,
+        "plot_segbsp": true,
+        "plot_extrainfo": false,
+        "plot_demark": true,
+        "plot_marker": false,
+        "plot_rsi": false,
+        "plot_kdj": false,
+        "plot_boll": true,
+        "plot_tradeinfo": true
+    },
+    "plot_para": {
+        "seg": {
+            "width": "3",
+            "color": "gray",
+            "alpha": "0.1"
+        },
+        "bi": {
+            "show_num": false,
+            "disp_end": true
+        },
+        "figure": {
+            "x_range": 200,
+            "grid": null
+        },
+        "marker": {},
+        "segzs": {
+            "color": "orange",
+            "linewidth": 5,
+            "sub_linewidth": 4
+        }
+    }
+}
