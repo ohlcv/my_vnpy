@@ -1,9 +1,11 @@
 # chan_strategy.py
 
+import os
 from vnpy_ctastrategy import (
     CtaTemplate,
     StopOrder,
     Direction,
+    Offset,
     TickData,
     BarData,
     TradeData,
@@ -23,7 +25,7 @@ from vnpy_ctastrategy.chan.Common.CEnum import (
     KL_TYPE,
     DATA_FIELD,
 )
-
+from datetime import datetime
 
 class ChanStrategy(CtaTemplate):
     """
@@ -37,21 +39,21 @@ class ChanStrategy(CtaTemplate):
     fixed_size = 1
 
     # 策略变量
-    inLong = False
-    inShort = False
-    long_entry_price = 0
-    short_entry_price = 0
-    long_stoploss_price = 0
-    short_stoploss_price = 0
-
     last_b1_price = 0
     last_s1_price = 0
 
     parameters = ["fixed_size"]
-    variables = ["last_b1_price", "last_s1_price"]
+    variables = []
 
     def __init__(self, cta_engine, strategy_name, vt_symbol, setting):
         super().__init__(cta_engine, strategy_name, vt_symbol, setting)
+
+        self.inLong = False
+        self.inShort = False
+        self.long_entry_price = 0
+        self.short_entry_price = 0
+        self.long_stoploss_price = 0
+        self.short_stoploss_price = 0
 
         # 初始化 CChan 对象
         config = CChanConfig(
@@ -79,6 +81,13 @@ class ChanStrategy(CtaTemplate):
 
         # 初始化数据源
         C_VnpyDataApi.do_init()
+        # 定义日志文件路径
+        self.log_path = os.path.join(os.path.expanduser('~'), 'Desktop', 'logs', f'{strategy_name}_{datetime.now().strftime("%Y%m%d%H%M%S")}.log')
+
+    def write_log_to_file(self, message):
+        """将日志写入文件"""
+        with open(self.log_path, 'a') as f:
+            f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - {message}\n")
 
     def on_init(self):
         """策略初始化"""
@@ -102,6 +111,7 @@ class ChanStrategy(CtaTemplate):
 
     def on_bar(self, bar: BarData):
         """收到新的K线数据时的回调"""
+        # self.write_log_to_file(f"收到新的K线: 时间={bar.datetime}, 开盘={bar.open_price}, 最高={bar.high_price}, 最低={bar.low_price}, 收盘={bar.close_price}, 成交量={bar.volume}")
         self.cancel_all()  # 取消所有未成交的订单
 
         # 将新的K线数据喂给CChan进行处理
@@ -123,66 +133,96 @@ class ChanStrategy(CtaTemplate):
         last_klc = cur_lv_chan[-1]
         last_klu_volume = last_klc[-1].trade_info.metric.get('volume')
 
-        if last_bsp_type == BSP_TYPE.T1 or BSP_TYPE.T1P and last_bsp.is_buy: 
-            if cur_lv_chan[-2].fx == FX_TYPE.BOTTOM:
-                self.last_b1_price = last_bsp.klu.low
-            elif cur_lv_chan[-2].fx == FX_TYPE.TOP:
-                self.last_s1_price = last_bsp.klu.high
-        
-        # 仅处理T2和T2S类型的买卖点
-        if BSP_TYPE.T2 not in last_bsp.type and BSP_TYPE.T2S not in last_bsp.type:
-            return
+        if not self.inLong and not self.inShort:
+            if last_bsp_type == BSP_TYPE.T1 or last_bsp_type == BSP_TYPE.T1P:
+                if cur_lv_chan[-2].fx == FX_TYPE.BOTTOM and last_bsp.is_buy:
+                    self.last_b1_price = last_bsp.klu.low
+                    self.write_log_to_file(f"时间: {bar.datetime}, 更新last_b1_price为: {self.last_b1_price}")
+                elif cur_lv_chan[-2].fx == FX_TYPE.TOP and not last_bsp.is_buy:
+                    self.last_s1_price = last_bsp.klu.high
+                    self.write_log_to_file(f"时间: {bar.datetime}, 更新last_s1_price为: {self.last_s1_price}")
 
-        # 检查最新买卖点的K线索引是否与当前级别的倒数第二根K线索引一致
-        if last_bsp.klu.klc.idx != cur_lv_chan[-2].idx:
-            return
-
-        if not self.pos:
+        if self.pos == 0:
             # 重置多空入场和止损价格
             self.long_entry_price = 0
             self.short_entry_price = 0
             self.long_stoploss_price = 0
             self.short_stoploss_price = 0
+            self.inLong = False
+            self.inShort = False
 
         # 判断是否为买入信号
-        buy_signal = (
+        buy1_signal = (
+            last_bsp.is_buy
+            and cur_lv_chan[-2].fx == FX_TYPE.BOTTOM
+            and (last_bsp_type == BSP_TYPE.T1 or last_bsp_type == BSP_TYPE.T1P)
+        )
+        buy2_signal = (
             last_bsp.is_buy
             and cur_lv_chan[-2].fx == FX_TYPE.BOTTOM
             and (last_bsp_type == BSP_TYPE.T2 or last_bsp_type == BSP_TYPE.T2S)
         )
 
         # 判断是否为卖出信号
-        sell_signal = (
+        sell1_signal = (
+            not last_bsp.is_buy
+            and cur_lv_chan[-2].fx == FX_TYPE.TOP
+            and (last_bsp_type == BSP_TYPE.T1 or last_bsp_type == BSP_TYPE.T1P)
+        )
+        sell2_signal = (
             not last_bsp.is_buy
             and cur_lv_chan[-2].fx == FX_TYPE.TOP
             and (last_bsp_type == BSP_TYPE.T2 or last_bsp_type == BSP_TYPE.T2S)
         )
 
-        if buy_signal:
-            if self.pos < 0:
-                self.cover(bar.close_price, abs(self.pos))  # 平空
-            if self.pos == 0:
+        self.write_log_to_file(f"时间: {bar.datetime}, 仓位: {self.pos}, 当前价格: {bar.close_price}, 空头止损，价格: {self.short_stoploss_price}")
+        if self.pos > 0:
+            if sell1_signal:
+                self.sell(bar.close_price, abs(self.pos))
+                self.write_log_to_file(f"时间: {bar.datetime}, 多头平仓，价格: {bar.close_price}")
+                self.inLong = False
+            if bar.close_price < self.long_stoploss_price:
+                self.sell(bar.close_price, abs(self.pos))
+                self.write_log_to_file(f"时间: {bar.datetime}, 多头止损，价格: {bar.close_price}")
+                self.inLong = False
+        if self.pos < 0:
+            if buy1_signal:
+                self.cover(bar.close_price, abs(self.pos))
+                self.write_log_to_file(f"时间: {bar.datetime}, 空头平仓，价格: {bar.close_price}")
+                self.inShort = False
+            if bar.close_price > self.short_stoploss_price:
+                self.cover(bar.close_price, abs(self.pos))
+                self.write_log_to_file(f"时间: {bar.datetime}, 空头止损，价格: {bar.close_price}")
+                self.inShort = False
+        if self.pos == 0:
+            if buy2_signal:
                 self.buy(bar.close_price, self.fixed_size)
-        if sell_signal:
-            if self.pos > 0:
-                self.sell(bar.close_price, abs(self.pos))   # 平多
-            if self.pos == 0:
-                self.short(bar.close_price, self.fixed_size)    # 做空
-
+                self.long_entry_price = bar.close_price  # 记录多头入场价
+                self.long_stoploss_price = self.last_b1_price  # 设置多头止损
+                self.inLong = True
+                self.write_log_to_file(f"时间: {bar.datetime}, 多头入场，价格: {bar.close_price}, 止损价: {self.last_b1_price}")
+            if sell2_signal:
+                self.short(bar.close_price, self.fixed_size)
+                self.short_entry_price = bar.close_price  # 记录空头入场价
+                self.short_stoploss_price = self.last_s1_price  # 设置空头止损
+                self.inShort = True
+                self.write_log_to_file(f"时间: {bar.datetime}, 空头入场，价格: {bar.close_price}, 止损价: {self.last_s1_price}")
 
     def on_trade(self, trade: TradeData):
         """收到成交数据时的回调"""
-        self.write_log(
-            f"成交: {trade.direction}, 价格: {trade.price}, 数量: {trade.volume}"
-        )
-        if trade.direction == Direction.LONG:  # 如果是多头成交
-            self.long_entry_price = trade.price  # 记录多头入场价
-            self.long_stoploss_price = self.last_b1_price  # 设置多头止损
-            self.write_log(f"多头入场，价格: {self.long_entry_price}, 止损价: {self.long_stoploss_price}")
-        elif trade.direction == Direction.SHORT:  # 如果是空头成交
-            self.short_entry_price = trade.price  # 记录空头入场价
-            self.short_stoploss_price = self.last_s1_price  # 设置空头止损
-            self.write_log(f"空头入场，价格: {self.short_entry_price}, 止损价: {self.short_stoploss_price}")
+        self.write_log(f"成交: {trade.direction}, 价格: {trade.price}, 数量: {trade.volume}")
+        # if trade.direction == Direction.LONG and trade.offset == Offset.OPEN:  # 如果是多头成交
+            # self.long_entry_price = trade.price  # 记录多头入场价
+            # self.long_stoploss_price = self.last_b1_price  # 设置多头止损
+            # self.inLong = True
+            # self.write_log(f"多头入场，价格: {self.long_entry_price}, 止损价: {self.long_stoploss_price}")
+            # self.write_log_to_file(f"多头入场，价格: {self.long_entry_price}, 止损价: {self.long_stoploss_price}")
+        # elif trade.direction == Direction.SHORT and trade.offset == Offset.OPEN:  # 如果是空头成交
+            # self.short_entry_price = trade.price  # 记录空头入场价
+            # self.short_stoploss_price = self.last_s1_price  # 设置空头止损
+            # self.inShort = True
+            # self.write_log(f"空头入场，价格: {self.short_entry_price}, 止损价: {self.short_stoploss_price}")
+            # self.write_log_to_file(f"空头入场，价格: {self.short_entry_price}, 止损价: {self.short_stoploss_price}")
 
     def on_order(self, order: OrderData):
         """收到订单数据时的回调"""
