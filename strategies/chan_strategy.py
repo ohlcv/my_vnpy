@@ -3,6 +3,7 @@
 from vnpy_ctastrategy import (
     CtaTemplate,
     StopOrder,
+    Direction,
     TickData,
     BarData,
     TradeData,
@@ -33,25 +34,21 @@ class ChanStrategy(CtaTemplate):
     author = "用Python的交易员"
 
     # 策略参数
-    entry_window = 20
-    exit_window = 10
-    atr_window = 20
     fixed_size = 1
 
     # 策略变量
-    entry_up = 0
-    entry_down = 0
-    exit_up = 0
-    exit_down = 0
-    atr_value = 0
+    inLong = False
+    inShort = False
+    long_entry_price = 0
+    short_entry_price = 0
+    long_stoploss_price = 0
+    short_stoploss_price = 0
 
-    long_entry = 0
-    short_entry = 0
-    long_stop = 0
-    short_stop = 0
+    last_b1_price = 0
+    last_s1_price = 0
 
-    parameters = ["entry_window", "exit_window", "atr_window", "fixed_size"]
-    variables = ["entry_up", "entry_down", "exit_up", "exit_down", "atr_value"]
+    parameters = ["fixed_size"]
+    variables = ["last_b1_price", "last_s1_price"]
 
     def __init__(self, cta_engine, strategy_name, vt_symbol, setting):
         super().__init__(cta_engine, strategy_name, vt_symbol, setting)
@@ -83,17 +80,13 @@ class ChanStrategy(CtaTemplate):
         # 初始化数据源
         C_VnpyDataApi.do_init()
 
-        # 持仓状态和买入价格
-        self.is_hold = False
-        self.last_buy_price = None
-
     def on_init(self):
         """策略初始化"""
         self.write_log("策略初始化")
+        self.load_bar(20)  # 加载20根K线
         # 加载历史数据
-        for klu in self.chan.load():
-            self.write_log(f"加载K线: {klu}")
-        self.write_log("策略初始化完成")
+        # for klu in self.chan.load():
+        #     self.write_log(f"加载K线: {klu}")
 
     def on_start(self):
         """策略启动"""
@@ -109,6 +102,8 @@ class ChanStrategy(CtaTemplate):
 
     def on_bar(self, bar: BarData):
         """收到新的K线数据时的回调"""
+        self.cancel_all()  # 取消所有未成交的订单
+
         # 将新的K线数据喂给CChan进行处理
         klu = self.convert_bar_to_klu(bar)
         self.chan.trigger_load({self.k_type: [klu]})
@@ -121,44 +116,77 @@ class ChanStrategy(CtaTemplate):
 
         # 获取最新的买卖点
         last_bsp = bsp_list[-1]
+        last_bsp_type = last_bsp.type[0]
+        last_bsp_volume = last_bsp.klu.trade_info.metric.get('volume')
+        cur_lv_chan = self.chan[0]  # 获取第一个级别的CKLine_List
+        last_fx_type = cur_lv_chan[-2].fx
+        last_klc = cur_lv_chan[-1]
+        last_klu_volume = last_klc[-1].trade_info.metric.get('volume')
 
-        # 仅处理T1和T1P类型的买卖点
-        if BSP_TYPE.T1 not in last_bsp.type and BSP_TYPE.T1P not in last_bsp.type:
+        if last_bsp_type == BSP_TYPE.T1 or BSP_TYPE.T1P and last_bsp.is_buy: 
+            if cur_lv_chan[-2].fx == FX_TYPE.BOTTOM:
+                self.last_b1_price = last_bsp.klu.low
+            elif cur_lv_chan[-2].fx == FX_TYPE.TOP:
+                self.last_s1_price = last_bsp.klu.high
+        
+        # 仅处理T2和T2S类型的买卖点
+        if BSP_TYPE.T2 not in last_bsp.type and BSP_TYPE.T2S not in last_bsp.type:
             return
-
-        # 获取当前级别的K线数据
-        cur_lv_chan = self.chan[0]
 
         # 检查最新买卖点的K线索引是否与当前级别的倒数第二根K线索引一致
         if last_bsp.klu.klc.idx != cur_lv_chan[-2].idx:
             return
 
+        if not self.pos:
+            # 重置多空入场和止损价格
+            self.long_entry_price = 0
+            self.short_entry_price = 0
+            self.long_stoploss_price = 0
+            self.short_stoploss_price = 0
+
         # 判断是否为买入信号
-        if (
-            cur_lv_chan[-2].fx == FX_TYPE.BOTTOM
-            and last_bsp.is_buy
-            and not self.is_hold
-        ):
-            self.last_buy_price = cur_lv_chan[-1][-1].close
-            self.buy(bar.close_price, self.fixed_size)
-            self.write_log(f"买入信号触发，价格: {self.last_buy_price}")
-            self.is_hold = True
+        buy_signal = (
+            last_bsp.is_buy
+            and cur_lv_chan[-2].fx == FX_TYPE.BOTTOM
+            # and (last_bsp_type == BSP_TYPE.T2 or last_bsp_type == BSP_TYPE.T2S)
+        )
 
         # 判断是否为卖出信号
-        elif cur_lv_chan[-2].fx == FX_TYPE.TOP and not last_bsp.is_buy and self.is_hold:
-            sell_price = cur_lv_chan[-1][-1].close
-            profit_rate = (sell_price - self.last_buy_price) / self.last_buy_price * 100
-            self.sell(sell_price, self.fixed_size)
-            self.write_log(
-                f"卖出信号触发，价格: {sell_price}, 盈利率: {profit_rate:.2f}%"
-            )
-            self.is_hold = False
+        sell_signal = (
+            last_bsp.is_buy
+            and cur_lv_chan[-2].fx == FX_TYPE.TOP
+            # and (last_bsp_type == BSP_TYPE.T2 or last_bsp_type == BSP_TYPE.T2S)
+        )
+
+        # print(sell_signal)
+        if sell_signal:
+            print(cur_lv_chan[-2].fx == FX_TYPE.TOP, last_bsp.is_buy, (last_bsp_type == BSP_TYPE.T2 or last_bsp_type == BSP_TYPE.T2S))
+
+        if buy_signal:
+            if self.pos < 0:
+                self.cover(bar.close_price, abs(self.pos))  # 平空
+            if self.pos == 0:
+                self.buy(bar.close_price, self.fixed_size)
+        if sell_signal:
+            if self.pos > 0:
+                self.sell(bar.close_price, abs(self.pos))   # 平多
+            if self.pos == 0:
+                self.short(bar.close_price, self.fixed_size)    # 做空
+
 
     def on_trade(self, trade: TradeData):
         """收到成交数据时的回调"""
         self.write_log(
             f"成交: {trade.direction}, 价格: {trade.price}, 数量: {trade.volume}"
         )
+        if trade.direction == Direction.LONG:  # 如果是多头成交
+            self.long_entry_price = trade.price  # 记录多头入场价
+            self.long_stoploss_price = self.last_b1_price  # 设置多头止损
+            self.write_log(f"多头入场，价格: {self.long_entry_price}, 止损价: {self.long_stoploss_price}")
+        elif trade.direction == Direction.SHORT:  # 如果是空头成交
+            self.short_entry_price = trade.price  # 记录空头入场价
+            self.short_stoploss_price = self.last_s1_price  # 设置空头止损
+            self.write_log(f"空头入场，价格: {self.short_entry_price}, 止损价: {self.short_stoploss_price}")
 
     def on_order(self, order: OrderData):
         """收到订单数据时的回调"""

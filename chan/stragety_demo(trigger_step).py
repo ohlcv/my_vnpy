@@ -387,6 +387,7 @@ if __name__ == "__main__":
         cur_lv_chan = chan[0]
         last_bar = cur_lv_chan[-1][-1]
         strategy.on_bar(cur_lv_chan, last_bar, last_bsp)
+        print(chan[0])
 
     # 执行策略结束后的统计
     strategy.stop(last_bar)
