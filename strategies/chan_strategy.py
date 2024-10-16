@@ -148,19 +148,15 @@ class ChanStrategy(CtaTemplate):
         buy_signal = (
             last_bsp.is_buy
             and cur_lv_chan[-2].fx == FX_TYPE.BOTTOM
-            # and (last_bsp_type == BSP_TYPE.T2 or last_bsp_type == BSP_TYPE.T2S)
+            and (last_bsp_type == BSP_TYPE.T2 or last_bsp_type == BSP_TYPE.T2S)
         )
 
         # 判断是否为卖出信号
         sell_signal = (
             not last_bsp.is_buy
             and cur_lv_chan[-2].fx == FX_TYPE.TOP
-            # and (last_bsp_type == BSP_TYPE.T2 or last_bsp_type == BSP_TYPE.T2S)
+            and (last_bsp_type == BSP_TYPE.T2 or last_bsp_type == BSP_TYPE.T2S)
         )
-
-        # print(sell_signal)
-        if sell_signal:
-            print(cur_lv_chan[-2].fx == FX_TYPE.TOP, last_bsp.is_buy, (last_bsp_type == BSP_TYPE.T2 or last_bsp_type == BSP_TYPE.T2S))
 
         if buy_signal:
             if self.pos < 0:
