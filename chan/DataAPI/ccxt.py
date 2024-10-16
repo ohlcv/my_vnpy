@@ -99,7 +99,7 @@ class CCXT(CCommonStockApi):
         获取K线数据，限制每次最多获取100条K线，循环获取所有所需数据，并在获取过程中打印进度。
         如果设置了保存CSV参数，则在获取完成后保存数据到CSV文件。
         """
-        fields = "time,timestamp,open,high,low,close,volume"  # 需要获取的字段
+        fields = "time,open,high,low,close,volume"  # 需要获取的字段
         exchange = ccxt.binance()  # 实例化ccxt的Binance交易所对象
         timeframe = self.__convert_type()  # 转换K线类型为ccxt库所需格式
 
@@ -146,7 +146,6 @@ class CCXT(CCommonStockApi):
                 # 构建K线数据条目，包括时间、时间戳、开、高、低、收、量
                 item_data = [
                     time_str,
-                    timestamp,
                     item[1],
                     item[2],
                     item[3],
@@ -282,7 +281,7 @@ class CCXT(CCommonStockApi):
         return _dict[self.k_type]
 
     # 工具函数：解析时间字符串为 CTime 对象
-    def parse_time_column(inp):
+    def parse_time_column(self, inp):
         """
         将时间字符串解析为 CTime 对象。根据时间格式的不同，做出不同的解析。
         支持以下格式：
