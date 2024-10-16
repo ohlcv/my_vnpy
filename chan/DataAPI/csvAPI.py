@@ -1,13 +1,12 @@
 import os
 import csv
-from datetime import datetime
+from datetime import datetime, timedelta
 
-
-from ..Common.CEnum import AUTYPE, DATA_FIELD, KL_TYPE  # 数据字段和K线类型枚举
-from ..Common.ChanException import CChanException, ErrCode  # 自定义异常类和错误码
-from ..Common.CTime import CTime  # 时间处理类
-from ..Common.func_util import kltype_lt_day, str2float  # 字符串转浮点数的工具函数
-from ..KLine.KLine_Unit import CKLine_Unit  # 自定义的K线数据单元类
+from Common.CEnum import AUTYPE, DATA_FIELD, KL_TYPE  # 数据字段和K线类型枚举
+from Common.ChanException import CChanException, ErrCode  # 自定义异常类和错误码
+from Common.CTime import CTime  # 时间处理类
+from Common.func_util import kltype_lt_day, str2float  # 字符串转浮点数的工具函数
+from KLine.KLine_Unit import CKLine_Unit  # 自定义的K线数据单元类
 
 from .CommonStockAPI import CCommonStockApi  # 从当前目录导入基类 CCommonStockApi
 
@@ -23,13 +22,28 @@ def create_item_dict(data, column_name):
     :param column_name: list，对应列名的列表
     :return: dict，将数据转换为以列名为键的数据字典
     """
-    for i in range(len(data)):
-        # 根据列名判断是否为时间列，如果是则解析为 CTime 对象，否则将字符串转换为浮点数
-        data[i] = (
-            parse_time_column(data[i])
-            if column_name[i] == DATA_FIELD.FIELD_TIME
-            else str2float(data[i])
-        )
+    time_index = None
+    time_key = None
+
+    # 检查是否存在时间列
+    for i, col_name in enumerate(column_name):
+        if col_name == DATA_FIELD.FIELD_TIME:
+            time_key = DATA_FIELD.FIELD_TIME
+            time_index = i
+        elif col_name == DATA_FIELD.FIELD_DATETIME:
+            time_key = DATA_FIELD.FIELD_TIME
+            time_index = i
+            # 更新列名以反映时间字段的变化
+            column_name[i] = DATA_FIELD.FIELD_TIME
+
+    if time_index is not None:
+        data[time_index] = parse_time_column(data[time_index])
+
+    # 将其他非时间字段转换为浮点数
+    for i, value in enumerate(data):
+        if i != time_index:
+            data[i] = str2float(value)
+
     # 使用 zip 将列名和数据值组合成字典
     return dict(zip(column_name, data))
 
@@ -59,12 +73,14 @@ def parse_time_column(inp):
         day = int(inp[6:8])
         hour = int(inp[8:10])
         minute = int(inp[10:12])
+        second = int(inp[12:14])
     elif len(inp) == 19 and " " in inp:  # 格式 YYYY-MM-DD HH:MM:SS
         year = int(inp[:4])
         month = int(inp[5:7])
         day = int(inp[8:10])
         hour = int(inp[11:13])
         minute = int(inp[14:16])
+        second = int(inp[17:19])
     elif len(inp) == 16 and "/" in inp:  # 新增格式 YYYY/MM/DD HH:MM
         year = int(inp[:4])
         month = int(inp[5:7])
@@ -75,7 +91,7 @@ def parse_time_column(inp):
         # 如果时间格式不符合预期，抛出异常
         raise Exception(f"unknown time column from csv:{inp}")
     # 返回解析后的 CTime 对象
-    return CTime(year, month, day, hour, minute)
+    return CTime(year, month, day, hour, minute, second)
 
 
 # CSV数据处理API类，继承自 CCommonStockApi
@@ -102,8 +118,9 @@ class CSV_API(CCommonStockApi):
 
         # 定义CSV文件中的列名
         self.columns = [
-            DATA_FIELD.FIELD_TIME,  # 时间列
-            DATA_FIELD.FIELD_TIMESTAMP,
+            # DATA_FIELD.FIELD_TIME,  # 时间列
+            # DATA_FIELD.FIELD_TIMESTAMP,
+            DATA_FIELD.FIELD_DATETIME,
             DATA_FIELD.FIELD_OPEN,  # 开盘价
             DATA_FIELD.FIELD_HIGH,  # 最高价
             DATA_FIELD.FIELD_LOW,  # 最低价
@@ -115,9 +132,9 @@ class CSV_API(CCommonStockApi):
         ]
 
         # 获取时间戳列的索引，便于后续过滤
-        self.timestamp_idx = self.columns.index(DATA_FIELD.FIELD_TIMESTAMP)
-        # 获取时间列的索引，便于后续判断数据的时间范围
-        self.time_idx = self.columns.index(DATA_FIELD.FIELD_TIME)
+        # self.timestamp_idx = self.columns.index(DATA_FIELD.FIELD_TIMESTAMP)
+        # self.time_idx = self.columns.index(DATA_FIELD.FIELD_TIME)
+        self.datetime_idx = self.columns.index(DATA_FIELD.FIELD_DATETIME)
 
         # 调用父类的初始化方法，传入相关参数
         super(CSV_API, self).__init__(code, k_type, begin_time, end_time, autype)
@@ -125,7 +142,7 @@ class CSV_API(CCommonStockApi):
 
         # 尝试将 begin_time 字符串转换为 datetime 对象，如果 begin_time 为空，则设置为 None
         try:
-            self.begin_time = (
+            self.begin_datetime = (
                 datetime.strptime(begin_time, "%Y-%m-%d") if begin_time else None
             )
         except ValueError as ve:
@@ -140,9 +157,9 @@ class CSV_API(CCommonStockApi):
 
         # 尝试将 end_time 字符串转换为 datetime 对象，如果 end_time 为空，则设置为 None
         try:
-            self.end_time = (
-                datetime.strptime(end_time, "%Y-%m-%d") if end_time else None
-            )
+            if end_time:
+                self.end_datetime = datetime.strptime(end_time, "%Y-%m-%d")
+                self.end_datetime += timedelta(days=1)
         except ValueError as ve:
             # 如果转换失败，捕获 ValueError 异常
             # 抛出 CChanException 异常，并附带错误信息和自定义错误代码
@@ -190,14 +207,14 @@ class CSV_API(CCommonStockApi):
             )
 
         # 计算时间戳（毫秒）
-        begin_timestamp_ms = (
-            int(self.begin_time.timestamp() * 1000) if self.begin_time else None
-        )
-        end_timestamp_ms = (
-            int(self.end_time.timestamp() * 1000) + oneDayTimestamp
-            if self.end_time
-            else None
-        )
+        # begin_timestamp_ms = (
+        #     int(self.begin_datetime.timestamp() * 1000) if self.begin_time else None
+        # )
+        # end_timestamp_ms = (
+        #     int(self.end_datetime.timestamp() * 1000) + oneDayTimestamp
+        #     if self.end_time
+        #     else None
+        # )
 
         kl_units = []
 
@@ -218,28 +235,27 @@ class CSV_API(CCommonStockApi):
 
                 # 提取时间戳字段并转换为整数
                 try:
-                    current_timestamp_ms = int(row[self.timestamp_idx])
-                    current_time = row[self.time_idx]
-                except ValueError as ve:
+                    current_datetime_str = row[self.datetime_idx]
+                    current_datetime = datetime.strptime(
+                        current_datetime_str, "%Y-%m-%d %H:%M:%S"
+                    )
+                except:
                     print(
-                        f"时间戳解析错误: {row[self.timestamp_idx]}，跳过第 {line_number} 行"
+                        f"时间解析错误: {row[self.datetime_idx]}，跳过第 {line_number} 行"
                     )
                     continue
 
                 # 如果指定了开始时间，并且当前数据时间戳小于开始时间戳，则跳过该条数据
                 if (
                     self.begin_time is not None
-                    and current_timestamp_ms < begin_timestamp_ms
+                    and current_datetime < self.begin_datetime
                 ):
-                    # print(f"当前时间{current_time}小于开始时间，跳过第 {line_number} 行")
+                    # print(f"当前时间{current_datetime}小于开始时间，跳过第 {line_number} 行")
                     continue
 
                 # 如果指定了结束时间，并且当前数据时间戳大于结束时间戳，则跳过该条数据
-                if (
-                    self.end_time is not None
-                    and current_timestamp_ms > end_timestamp_ms
-                ):
-                    # print(f"当前时间{current_time}大于结束时间，跳过第 {line_number} 行")
+                if self.end_time is not None and current_datetime > self.end_datetime:
+                    # print(f"当前时间{current_datetime}大于结束时间，跳过第 {line_number} 行")
                     continue
 
                 # 将每行数据转换为 CKLine_Unit 对象，并添加到列表中
@@ -252,7 +268,7 @@ class CSV_API(CCommonStockApi):
                     continue
 
         # 按时间升序排序
-        kl_units.sort(key=lambda klu: klu.timestamp)  # 假设 klu.time.ts 是时间戳
+        kl_units.sort(key=lambda klu: klu.time.ts)  # 假设 klu.time.ts 是时间戳
 
         # 生成排序后的K线数据
         for klu in kl_units:

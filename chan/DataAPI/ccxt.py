@@ -20,6 +20,7 @@ def GetColumnNameFromFieldList(fields: str):
     :return: 字段枚举的列表。
     """
     _dict = {
+        "datetime": DATA_FIELD.FIELD_DATETIME,
         "time": DATA_FIELD.FIELD_TIME,
         "timestamp": DATA_FIELD.FIELD_TIMESTAMP,  # 添加时间戳字段
         "open": DATA_FIELD.FIELD_OPEN,
@@ -211,7 +212,7 @@ class CCXT(CCommonStockApi):
             raise
 
         # 定义需要保存的字段，并增加时间戳字段
-        fields = "time,timestamp,open,high,low,close,volume"
+        fields = "datetime,open,high,low,close,volume"
         headers = GetColumnNameFromFieldList(fields)
 
         try:
@@ -221,8 +222,9 @@ class CCXT(CCommonStockApi):
                 for kl_unit in data:
                     # 提取需要的字段
                     row = {
-                        DATA_FIELD.FIELD_TIME: kl_unit.time.to_str(),  # 已包含时间信息
-                        DATA_FIELD.FIELD_TIMESTAMP: kl_unit.timestamp,  # 提取时间戳
+                        # DATA_FIELD.FIELD_TIME: kl_unit.time.to_str(),  # 已包含时间信息
+                        # DATA_FIELD.FIELD_TIMESTAMP: kl_unit.timestamp,  # 提取时间戳
+                        DATA_FIELD.FIELD_DATETIME: kl_unit.time.to_datetime(),
                         DATA_FIELD.FIELD_OPEN: kl_unit.open,
                         DATA_FIELD.FIELD_HIGH: kl_unit.high,
                         DATA_FIELD.FIELD_LOW: kl_unit.low,
@@ -279,39 +281,50 @@ class CCXT(CCommonStockApi):
         }
         return _dict[self.k_type]
 
-    def parse_time_column(self, inp):
+    # 工具函数：解析时间字符串为 CTime 对象
+    def parse_time_column(inp):
         """
-        解析时间字段，将字符串格式的时间转换为CTime对象。
+        将时间字符串解析为 CTime 对象。根据时间格式的不同，做出不同的解析。
+        支持以下格式：
+        - 10位格式：YYYY-MM-DD
+        - 17位格式：YYYYMMDDHHMM00000
+        - 19位格式：YYYY-MM-DD HH:MM:SS
+        - 新增格式：YYYY/MM/DD HH:MM
 
-        :param inp: 时间字符串。
-        :return: CTime对象。
-        :raises Exception: 如果时间格式未知，抛出异常。
+        :param inp: str，时间字符串
+        :return: CTime 对象，表示解析后的时间
         """
-        if len(inp) == 10:  # 日期格式为"YYYY-MM-DD"
+        # 根据时间字符串的长度和格式，解析不同格式的时间
+        if len(inp) == 10:  # 格式 YYYY-MM-DD
             year = int(inp[:4])
             month = int(inp[5:7])
             day = int(inp[8:10])
-            hour = minute = 0
-        elif len(inp) == 17:  # 日期格式为"YYYYMMDDHHMMSS"
+            hour = minute = 0  # 没有时间信息，默认为 0
+        elif len(inp) == 17:  # 格式 YYYYMMDDHHMM00000
             year = int(inp[:4])
             month = int(inp[4:6])
             day = int(inp[6:8])
             hour = int(inp[8:10])
             minute = int(inp[10:12])
-        elif len(inp) == 19:  # 日期格式为"YYYY-MM-DD HH:MM:SS"
+            second = int(inp[12:14])
+        elif len(inp) == 19 and " " in inp:  # 格式 YYYY-MM-DD HH:MM:SS
+            year = int(inp[:4])
+            month = int(inp[5:7])
+            day = int(inp[8:10])
+            hour = int(inp[11:13])
+            minute = int(inp[14:16])
+            second = int(inp[17:19])
+        elif len(inp) == 16 and "/" in inp:  # 新增格式 YYYY/MM/DD HH:MM
             year = int(inp[:4])
             month = int(inp[5:7])
             day = int(inp[8:10])
             hour = int(inp[11:13])
             minute = int(inp[14:16])
         else:
-            raise Exception(
-                f"unknown time column from TradingView:{inp}"
-            )  # 抛出异常，未知时间格式
-        # 返回CTime对象，并判断是否为日线以上周期
-        return CTime(
-            year, month, day, hour, minute, auto=not kltype_lt_day(self.k_type)
-        )
+            # 如果时间格式不符合预期，抛出异常
+            raise Exception(f"unknown time column from csv:{inp}")
+        # 返回解析后的 CTime 对象
+        return CTime(year, month, day, hour, minute, second)
 
     def create_item_dict(self, data, column_name):
         """
@@ -329,12 +342,9 @@ class CCXT(CCommonStockApi):
             # 如果是第一列数据（时间字段），调用 parse_time_column 方法进行解析
             if i == 0:
                 data[i] = self.parse_time_column(data[i])  # 转换为 CTime 对象
-            elif i == 1:
-                data[i] = int(data[i])
             else:
                 # 否则，调用 str2float 将字符串数据转换为浮点数
                 data[i] = str2float(data[i])
 
         # 将列名（column_name）与数据（data）组合成字典，并返回
-        # dict(zip(column_name, data)) 将 column_name 和 data 中每个对应元素配对成键值对，组成字典返回
         return dict(zip(column_name, data))
