@@ -153,7 +153,7 @@ class ChanStrategy(CtaTemplate):
 
         # 判断是否为卖出信号
         sell_signal = (
-            last_bsp.is_buy
+            not last_bsp.is_buy
             and cur_lv_chan[-2].fx == FX_TYPE.TOP
             # and (last_bsp_type == BSP_TYPE.T2 or last_bsp_type == BSP_TYPE.T2S)
         )
